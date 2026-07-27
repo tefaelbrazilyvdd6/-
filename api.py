@@ -51,7 +51,11 @@ def build_proxies(proxy_str):
     """Parse proxy string into a proxies dict for requests.
     Formats: ip:port | ip:port:user:pass | http://ip:port
     """
-    if not proxy_str or not proxy_str.strip():
+    if not proxy_str:
+        return None
+    if isinstance(proxy_str, dict):
+        return proxy_str  # Already a proxies dict
+    if not proxy_str.strip():
         return None
     proxy_str = proxy_str.strip()
     # If already a URL
@@ -106,6 +110,7 @@ class ShopifyChecker:
         self._verbose                  = False
         self.build_id                  = '4663384ede457d59be87980de7797171b19f2a1b'
         self.pci_build_hash            = 'a8e4a94'
+        self._proxy_str                = proxy_str  # Keep original proxy string for re-init
 
         # Apply proxy
         self.proxies = build_proxies(proxy_str)
@@ -1105,7 +1110,7 @@ class ShopifyChecker:
             pass
 
     def check_card(self, site, cc_line):
-        self.__init__(base_url=site, proxy_str=self.proxies)
+        self.__init__(base_url=site, proxy_str=self._proxy_str)
         if not site.startswith('http'):
             site = 'https://' + site
         self.base_url = site.rstrip('/')
