@@ -1119,14 +1119,14 @@ class ShopifyChecker:
 
         if not self.get_initial_session():
             elapsed = round(time.time() - start_time, 2)
-            return ("CARD_DECLINED", cc_line, f"{elapsed}s", "Session init failed")
+            return ("ERROR", cc_line, f"{elapsed}s", "Site unavailable — session init failed")
         if not self.find_cheapest_product():
             elapsed = round(time.time() - start_time, 2)
-            return ("CARD_DECLINED", cc_line, f"{elapsed}s", "No product found")
+            return ("ERROR", cc_line, f"{elapsed}s", "No available products on site")
         self.get_delivery_estimates()
         if not self.add_to_cart():
             elapsed = round(time.time() - start_time, 2)
-            return ("CARD_DECLINED", cc_line, f"{elapsed}s", "Add to cart failed")
+            return ("ERROR", cc_line, f"{elapsed}s", "Add to cart failed — site may block bots")
         self.monorail_produce()
         self.monorail_produce_batch("product_added_to_cart", "4.27")
         self.monorail_produce_batch("product_added_to_cart", "5.6")
@@ -1135,16 +1135,16 @@ class ShopifyChecker:
         self.refresh_cart()
         if not self.start_checkout():
             elapsed = round(time.time() - start_time, 2)
-            return ("CARD_DECLINED", cc_line, f"{elapsed}s", "Checkout start failed")
+            return ("ERROR", cc_line, f"{elapsed}s", "Checkout start failed — site may block bots")
         if not self.get_checkout_metadata():
             elapsed = round(time.time() - start_time, 2)
-            return ("CARD_DECLINED", cc_line, f"{elapsed}s", "Token extraction failed")
+            return ("ERROR", cc_line, f"{elapsed}s", "Token extraction failed — proxy issue")
 
         address = self.get_random_address()
         vault_id = self.vault_card(cc_line)
         if not vault_id:
             elapsed = round(time.time() - start_time, 2)
-            return ("CARD_DECLINED", cc_line, f"{elapsed}s", "Card vault failed")
+            return ("DECLINED", cc_line, f"{elapsed}s", "Card vault rejected — invalid card")
 
         _cc_number = cc_line.split('|')[0].strip() if '|' in cc_line else ""
         receipt_id = self.submit_for_completion(vault_id, address, card_number=_cc_number)
@@ -1153,7 +1153,7 @@ class ShopifyChecker:
         elapsed = round(time.time() - start_time, 2)
 
         if not receipt_id:
-            return ("CARD_DECLINED", cc_line, f"{elapsed}s", "No receipt — submission rejected")
+            return ("DECLINED", cc_line, f"{elapsed}s", "Payment rejected by gateway")
 
         result = self.poll_for_receipt(receipt_id)
         if isinstance(result, tuple):
@@ -1194,11 +1194,15 @@ def check_card_api():
 
     try:
         checker = ShopifyChecker(base_url=url, proxy_str=proxy if proxy else None)
+        checker._verbose = True  # Enable step logging
         category, cc_out, elapsed, detail = checker.check_card(url, cc)
 
         # Determine Charged / Approved
         charged = "True" if category == "CHARGED" else "False"
         approved = "True" if category == "APPROVED" else "False"
+
+        # Log category for debugging
+        print(f"[API] Category: {category} | Detail: {detail} | CC: {cc}")
 
         # Determine Gate from last response
         gate = "Shopify Payments"
