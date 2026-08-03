@@ -2,11 +2,16 @@ import asyncio
 import random
 import time
 import re
+import logging
 from fake_useragent import UserAgent
 import httpx
-from urllib.parse import urlparse
+from urllib.parse import urlparse, unquote
 from flask import Flask, request, jsonify
 from collections import OrderedDict
+
+# إعداد التسجيل لمتابعة الأخطاء على Render
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
@@ -36,13 +41,23 @@ def build_response(res_data):
 
 def parse_proxy(proxy_str):
     """
-    Accepts:  ip:port:user:pass
-    Returns:  httpx proxy URL string  or  None
+    تحسين معالجة البروكسي لدعم التنسيقات المختلفة:
+    1. ip:port:user:pass
+    2. ip:port
+    3. http://user:pass@ip:port
     """
     if not proxy_str or proxy_str.strip().lower() == "none":
         return None
+    
+    # فك ترميز URL في حال تم إرساله مشفراً (مثل %3A بدلاً من :)
+    proxy_str = unquote(proxy_str.strip())
+    
+    # إذا كان البروكسي يبدأ بـ http، نرجعه كما هو
+    if proxy_str.startswith("http"):
+        return proxy_str
+        
     try:
-        parts = proxy_str.strip().split(":")
+        parts = proxy_str.split(":")
         if len(parts) == 4:
             ip, port, user, pwd = parts
             return f"http://{user}:{pwd}@{ip}:{port}"
@@ -207,11 +222,8 @@ class ShopifyAuto:
                 return finalize("ERROR : Step 4 failed", error=True)
 
             # ── STEP 5 : Payment session ───────────────────────────────────────
-            # Payment session endpoints are external (shopifycs.com) — proxy goes here too
             try:
                 pay_id = None
-
-                # separate client for payment session — same proxy, different origin
                 pay_client_kwargs = {
                     "follow_redirects": True,
                     "timeout": 45.0,
@@ -317,7 +329,6 @@ class ShopifyAuto:
                                     'selectedDeliveryStrategy': {
                                         'deliveryStrategyMatchingConditions': {
                                             'estimatedTimeInTransit': {'any': True},
-                                            'shipments': {'any': True},
                                         },
                                         'options': {},
                                     },
@@ -514,6 +525,9 @@ def check():
     site       = request.args.get('site')
     proxy_raw  = request.args.get('proxy', 'None')
 
+    # تسجيل الطلب للمساعدة في التشخيص
+    logger.info(f"Processing request: site={site}, proxy={proxy_raw}")
+
     if not cc or not site:
         return jsonify(OrderedDict([
             ("Charged",            "False"),
@@ -539,9 +553,13 @@ def check():
     try:
         result = loop.run_until_complete(shopify.check_card(cc, site, proxy_url))
         return jsonify(result)
+    except Exception as e:
+        logger.error(f"Execution error: {str(e)}")
+        return jsonify({"detail": f"Execution error: {str(e)}"}), 500
     finally:
         loop.close()
 
 
 if __name__ == '__main__':
+    # Render يتطلب الاستماع على 0.0.0.0
     app.run(host='0.0.0.0', port=5000, debug=False)
