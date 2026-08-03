@@ -1,6 +1,3 @@
-fastapi
-uvicorn
-httpx
-beautifulsoup4
 fake-useragent
-pydantic
+httpx
+Flask
