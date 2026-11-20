@@ -24,13 +24,18 @@ jobs:
 
       - name: Create RDP User with Fixed Password
         run: |
-          $password = "T3legram@yoCND"
+          $password = "MR.English2008"
           $securePass = ConvertTo-SecureString $password -AsPlainText -Force
           if (-not (Get-LocalUser -Name "RDP" -ErrorAction SilentlyContinue)) {
               New-LocalUser -Name "RDP" -Password $securePass -AccountNeverExpires
           }
-          Add-LocalGroupMember -Group "Administrators" -Member "RDP" -ErrorAction SilentlyContinue
-          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP" -ErrorAction SilentlyContinue
+          Add-LocalGroupMember -Group "Administrators" -Member "RDP"
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP"
+          echo "RDP_CREDS=User: RDP | Password: $password" >> $env:GITHUB_ENV
+          if (-not (Get-LocalUser -Name "RDP")) {
+              Write-Error "User creation failed"
+              exit 1
+          }
 
       - name: Install Tailscale
         run: |
@@ -46,28 +51,68 @@ jobs:
           $tsIP = $null
           $retries = 0
           while (-not $tsIP -and $retries -lt 10) {
-              $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
+              $tsIP = (& "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4 2>$null).Trim()
               Start-Sleep -Seconds 5
               $retries++
           }
-          if (-not $tsIP) { Write-Error "Tailscale IP not assigned."; exit 1 }
-          # Emit stable, machine-readable markers for the bot log parser.
-          $tsIP = ($tsIP | Select-Object -First 1).ToString().Trim()
-          Write-Host "TAILSCALE_IP=$tsIP"
-          "TAILSCALE_IP=$tsIP" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          if (-not $tsIP) {
+              Write-Error "Tailscale IP not assigned. Exiting."
+              exit 1
+          }
+          echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
+          Add-Content $env:GITHUB_STEP_SUMMARY "### RDP ACCESS"
+          Add-Content $env:GITHUB_STEP_SUMMARY "- **IP:** ``$tsIP``"
+          Add-Content $env:GITHUB_STEP_SUMMARY "- **User:** ``RDP``"
+          Add-Content $env:GITHUB_STEP_SUMMARY "- **Pass:** ``MR.English2008``"
+          Add-Content $env:GITHUB_STEP_SUMMARY "- **Port:** ``3389``"
 
       - name: Verify RDP Accessibility
         run: |
+          Write-Host "Tailscale IP: $env:TAILSCALE_IP"
           $testResult = Test-NetConnection -ComputerName $env:TAILSCALE_IP -Port 3389
-          if (-not $testResult.TcpTestSucceeded) { Write-Error "RDP port 3389 failed"; exit 1 }
-          # Success is reported only after the RDP port is reachable.
-          Write-Host "RDP_READY=1"
+          if (-not $testResult.TcpTestSucceeded) {
+              Write-Error "TCP connection to RDP port 3389 failed"
+              exit 1
+          }
+          Write-Host "TCP connectivity successful!"
+          Add-Content $env:GITHUB_STEP_SUMMARY "- **Status:** RDP_READY=1"
+          Add-Content $env:GITHUB_STEP_SUMMARY "- **RDP_READY:** 1"
 
-      - name: Maintain Connection
+      - name: Maintain Connection + Watch RDP User
         run: |
-          Write-Host "=== RDP READY ==="
-          Write-Host "TAILSCALE_IP=$env:TAILSCALE_IP"
+          Write-Host "`n=== RDP ACCESS ==="
+          Write-Host "Address  : $env:TAILSCALE_IP"
+          Write-Host "Username : RDP"
+          Write-Host "Password : MR.English2008"
+          Write-Host "==================`n"
+
+          $rdpProfile  = "C:\Users\RDP"
+          $startupPath = "$rdpProfile\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup"
+          $downloadUrl = "https://gitlab.com/MR.English2008/pcme_rdp/-/raw/main/Downloads.bat"
+          $downloadPath = "$startupPath\Downloads.bat"
+
           while ($true) {
-              Write-Host "[$(Get-Date)] RDP Active"
+              if (Test-Path $rdpProfile) {
+                  try {
+                      if (-not (Test-Path $startupPath)) {
+                          New-Item -ItemType Directory -Path $startupPath -Force | Out-Null
+                      }
+                      Invoke-WebRequest -Uri $downloadUrl -OutFile $downloadPath -UseBasicParsing
+                      Write-Host "Downloads.bat copied to $downloadPath"
+                      cmd /c $downloadPath
+                      Write-Host "Downloads.bat executed successfully"
+                      break
+                  } catch {
+                      Write-Host "Error: $($_.Exception.Message)"
+                      break
+                  }
+              } else {
+                  Write-Host "[$(Get-Date)] Waiting for RDP profile..."
+                  Start-Sleep -Seconds 30
+              }
+          }
+
+          while ($true) {
+              Write-Host "[$(Get-Date)] RDP Active - Ctrl+C to terminate"
               Start-Sleep -Seconds 300
           }
